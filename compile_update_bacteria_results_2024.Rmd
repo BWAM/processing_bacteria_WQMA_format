@@ -1,0 +1,646 @@
+---
+title: "2024_processing"
+author: "Keleigh Reynolds"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(skimr)
+library(janitor)
+library(tidyverse)
+library(dplyr)
+```
+
+First bring in the raw data
+
+```{r}
+raw<-read.csv(here::here("data/Copy of Bacteria_Data_MRBP_for_Database_2024.csv"))
+```
+
+Now we'll subset to the columns we need for the DB
+```{r}
+temp_result<-raw %>% 
+  select(c("sample_date",
+           "SITE_ID",
+           "sys_sample_code",
+           "lab_sdg",
+           "lab_anl_method_name",
+           "analysis_date",
+           "fraction",
+           "column_number",
+           "test_type",
+           "lab_matrix_code",
+           "analysis_location",
+           "basis",
+           "container_id",
+           "dilution_factor",
+           "prep_method",
+           "prep_date",
+           "leachate_method",
+           "leachate_date",
+           "lab_name_code",
+           "qc_level",
+           "lab_sample_id",
+           "percent_moisture",
+           "subsample_amount",
+           "subsample_amount_unit",
+           "analyst_name",
+           "instrument_id",
+           "preservative",
+           "final_volume",
+           "final_volume_unit",
+           "cas_rn",
+           "chemical_name",
+           "result_value",
+           "result_error_delta",
+           "result_type_code",
+           "reportable_result",
+           "detect_flag",
+           "lab_qualifiers",
+           "validator_qualifiers",
+           "interpreted_qualifiers",
+           "validated_yn",
+           "method_detection_limit",
+           "reporting_detection_limit",
+           "quantitation_limit",
+           "result_unit",
+           "detection_limit_unit",
+           "tic_retention_time",
+           "minimum_detectable_conc",
+           "counting_error",
+           "uncertainty",
+           "critical_value",
+           "validation_level",
+           "result_comment",
+           "qc_original_conc",
+           "qc_spike_added",
+           "qc_spike_measured",
+           "qc_spike_recovery",
+           "qc_dup_original_conc",
+           "qc_dup_spike_added",
+           "qc_dup_spike_measured",
+           "qc_dup_spike_recovery",
+           "qc_rpd","qc_spike_lcl",
+           "qc_spike_ucl",
+           "qc_rpd_cl",
+           "qc_spike_status",
+           "qc_dup_spike_status",
+           "qc_rpd_status"))
+                          
+
+temp_sample <- raw %>% 
+  select(c(SITE_ID,SITE_ID_CORR_IND,SEIH_EVENT_SMAS_HISTORY_ID,DEC_sample_type,
+           "data_provider",
+           "sys_sample_code",
+           "sample_name",
+           "sample_matrix_code",
+           "sample_type_code",
+           "sample_source",
+           "parent_sample_code",
+           "sample_delivery_group",
+           "sample_date",
+           "sys_loc_code",
+           "start_depth",
+           "end_depth",
+           "depth_unit",
+           "chain_of_custody",
+           "sent_to_lab_date",
+           "sample_receipt_date",
+           "sampler",
+           "sampling_company_code",
+           "sampling_reason",
+           "sampling_technique",
+           "task_code",
+           "collection_quarter",
+           "composite_yn",
+           "composite_desc",
+           "sample_class",
+           "custom_field_1",
+           "custom_field_2",
+           "custom_field_3",
+           "lat",
+           "long"))
+
+
+
+```
+
+```{r}
+temp_sample$lab_sdg<-temp_sample$sample_delivery_group
+temp_sample<-temp_sample %>% 
+  distinct()
+
+```
+
+Test join by sys_sample_code and SDG
+```{r Initial join test}
+test_join_sample.result <- left_join(temp_sample, temp_result, by = c("sys_sample_code", "lab_sdg"))
+
+# CHECKS OUT OKAY. Same number of records created in joined table as in RESULT table.
+
+rm(test_join_sample.result)
+
+#fix fecal coliform
+
+#fix the fecal coliform names
+temp_result<-temp_result %>% 
+  mutate(chemical_name=case_when(
+    chemical_name %in% "COLIFORM, FECAL"~"coliform, fecal",
+    TRUE~chemical_name
+  ),
+  sample_delivery_group = lab_sdg)
+
+#fix the estimated units- no < or > signs allowed
+result.all<-temp_result %>% 
+  mutate(validator_qualifiers = case_when(
+    result_value == "<1"~"J",
+    result_value == ">2,419.6"~"J",
+    TRUE~ "A"),
+    result_value = case_when(
+    result_value == "<1"~"1",
+    result_value == ">2,419.6"~"2419.6",
+    result_value == ">2419.6"~"2419.6",
+    TRUE~result_value),
+    result_value= as.numeric(result_value),
+    fraction = ""
+  )
+
+```
+
+Join flags and related fields to results table
+```{r Join QAQC flags}
+result.all <- result.all %>% 
+  mutate(chemical_name = tolower(chemical_name))
+
+result.all$fraction<-tolower(result.all$fraction)
+result.all<-result.all %>% 
+  select(sys_sample_code,sample_delivery_group,chemical_name,fraction,everything())
+
+
+#  Look for duplicate records (possible issues with join)
+dups <- result.all %>% 
+  group_by(sys_sample_code, sample_delivery_group, chemical_name, fraction) %>% 
+  mutate(dups = n()) %>% 
+  filter(dups > 1)
+ # Found: nothing for bacteria
+```
+
+Flag any field results not run through QAQC
+```{r Populated flags fir non-QAQCd data}
+# Join sample type field from SAMPLE table to gather required info for filtering
+sample.all.type <- temp_sample %>% 
+  select(SITE_ID, sys_sample_code, sample_source, sample_delivery_group, DEC_sample_type, sample_type_code)
+
+result.all.type <- left_join(result.all, sample.all.type, by = c("sys_sample_code", "sample_delivery_group")) 
+  # select(SITE_ID, sample_source, DEC_sample_type, sample_type_code, validator_qualifiers, VALIDATOR_QUAL_EXPLN, everything())
+
+# Check this to see what types of samples got flags. Only N and N_xxx samples should be getting flags.
+result.all.type.check <- result.all.type %>% 
+  select(validator_qualifiers, DEC_sample_type) %>% 
+  distinct()
+
+# Filter out normal samples that didn't get flags to verify that only the ones intentionally not flagged are there.
+result.all.notflagged.n <- result.all.type %>% 
+  filter(is.na(validator_qualifiers),
+         DEC_sample_type %in% "N",
+         sample_source %in% "Field")
+unique(result.all.notflagged.n$SITE_ID)
+# Found: nothing!
+
+# Mark validated_yn as "N" for normal field samples with no validator flag. Add E flags and explanations if needed.
+result.all.flagged2 <- result.all.type %>% 
+  mutate(validated_yn = ifelse(
+    is.na(validator_qualifiers) &
+      DEC_sample_type %in% "N" &
+      sample_source %in% "Field",
+    "N", validated_yn)) 
+
+
+# Verify that only remaining field "N" samples without flags are those params we don't flag
+result.all.flagged2.naflags <- result.all.flagged2 %>% 
+  filter(is.na(validator_qualifiers),
+         sample_source %in% "Field",
+         DEC_sample_type %in% "N")
+# Triple check. Ignore me. Above checks out :)
+
+#clean up the workspace
+rm(sample.all.type, result.all.type, result.all.type.check, result.all.notflagged.n, result.all.flagged2.naflags,dups,result.all.flagged2)
+
+
+```
+
+
+Reformat field names for WQMA format
+
+```{r Reformat field names}
+sample.all<-temp_sample %>% 
+  mutate(SITE_ID_CORR_IND = "") %>% 
+  #fix the dup/fb on the sites
+  mutate(SEIH_EVENT_SMAS_HISTORY_ID = SITE_ID,#keep a record of these
+         SITE_ID = gsub("*-DUP","",SITE_ID),
+         SITE_ID = gsub("*-FB","",SITE_ID))
+
+sample.all.formatted <- sample.all %>%
+  filter(!grepl("*-DUP",SEIH_EVENT_SMAS_HISTORY_ID)) %>% 
+  filter(!grepl("*-FB",SEIH_EVENT_SMAS_HISTORY_ID)) %>% 
+  mutate(sample_date = as.POSIXct(sample_date,format = "%m/%d/%Y %H:%M"),
+         EVENT_ID = paste(SITE_ID,
+                          "_",
+                          format(sample_date,"%Y%m%d"),
+                          "T",
+                          format(sample_date,"%H%M"),
+                          sep = "")) %>% 
+  select(EVENT_ID,everything()) %>% 
+  mutate(REPLICATE = 1,
+         SAMPLE_CREW = "MRBP Volunteers",
+         SAMPLE_LOCATION = "waded",
+         SAMPLE_METHOD_DESCRIPTION = "grab",
+         SAMPLE_METHOD_REFERENCE = "WQM-0072_V24-1_Mohawk-Bacteria",
+         SAMPLE_TYPE = "water_column",
+         SAMPLE_COMMENT = "",
+         SAMPLE_DEPTH_METERS = 0.1) %>% #add missing ones
+  select(
+    SITE_ID,
+    EVENT_ID,
+    SAMPLE_DELIVERY_GROUP = lab_sdg,
+    SAMPLE_LAB = sampling_company_code,
+    SAMPLE_METHOD = sampling_technique,
+    SAMPLE_NAME = sample_name,
+    SAMPLE_ORGANIZATION = sampling_company_code,
+    SAMPLE_SOURCE = data_provider,
+    # SAMPLE_ID - did not create this one as it's created in the db itself? FK?
+    SAMPLE_LATITUDE = lat,
+    SAMPLE_LONGITUDE = long,
+    SAMPLE_DELIVERY_GROUP = lab_sdg,
+    REPLICATE,
+    SAMPLE_CREW,
+    SAMPLE_LOCATION,
+    SAMPLE_METHOD_DESCRIPTION,
+    SAMPLE_METHOD_REFERENCE,
+    SAMPLE_TYPE,
+    SAMPLE_COMMENT,
+    SAMPLE_DEPTH_METERS)
+
+
+result.all.formatted <- result.all %>%
+  mutate(SEIH_EVENT_SMAS_HISTORY_ID = SITE_ID,#keep a record of these
+         SITE_ID = gsub("*-DUP","",SITE_ID),
+         SITE_ID = gsub("*-FB","",SITE_ID)) %>% 
+  filter(!grepl("*-DUP",SEIH_EVENT_SMAS_HISTORY_ID)) %>% 
+  filter(!grepl("*-FB",SEIH_EVENT_SMAS_HISTORY_ID)) %>% 
+                #remove the qc stuff
+  mutate(sample_date = as.POSIXct(sample_date,format = "%m/%d/%Y %H:%M"),tz = "America/New_York") %>% #first fix teh date
+  mutate(EVENT_ID = paste(SITE_ID,
+                          "_",
+                          format(sample_date,"%Y%m%d"),
+                          "T",
+                          format(sample_date,"%H%M"),
+                          sep = ""),
+         ANALYSIS_DATETIME = as.Date(analysis_date,format("%m/%d/%Y")),
+         DETECT_FLAG = case_when(
+           lab_qualifiers %in% ">"~"greater_than",
+           lab_qualifiers %in% "<" ~ "less_than",
+           TRUE ~ ""
+         ),
+         DETECTION_LIMIT_UNIT = "cfu/100mL",
+         LAB_VALIDATION_LEVEL = "quant",
+         PREP_METHOD = "not_applicable",
+         QUALIFIER_SOURCE = "laboratory",
+         REPORTABLE_RESULT = "Yes",
+         RESULT_CATEGORY = "not_applicable",
+         RESULT_COMMENT ="",
+         RESULT_QUALIFIER_NOTE = DETECT_FLAG, #this one seemed to match
+         RESULT_TYPE_CODE = "TRG",
+         TEST_TYPE = "initial",
+         RESULT_QUALIFIER_DESCRIPTION = 
+           case_when(validator_qualifiers %in% "A"~"accepted",
+                     validator_qualifiers %in% "J" ~ "Estimated concentration - still suitable for most data uses",
+                     TRUE ~ "error"
+                     
+           ),
+         PARAMETER_NAME = case_when(
+           chemical_name %in% "e. coli" ~ "e_coli",
+           chemical_name %in% "coliform, fecal" ~"fecal_coliform",
+           TRUE ~ "error"),
+         FRACTION = "not_applicable",
+         CASRN = cas_rn,
+         MATRIX = "water",
+         METHOD_SPECIATION = "not_applicable") %>% 
+  select(
+    SITE_ID,
+    EVENT_ID,
+    PARAMETER_NAME,
+    FRACTION,
+    CASRN,
+    MATRIX,
+    METHOD_SPECIATION,
+    DILUTION_FACTOR = dilution_factor,
+    FINAL_VOLUME = final_volume,
+    FINAL_VOLUME_UNIT = final_volume_unit,
+    LAB_ANALYTICAL_METHOD = lab_anl_method_name,
+    LAB_QUALIFIER = lab_qualifiers,
+    LAB_SAMPLE_ID = sys_sample_code,
+    METHOD_DETECTION_LIMIT = method_detection_limit,
+    PREP_DATETIME = analysis_date,
+    QUANTITATION_LIMIT = quantitation_limit,
+    REPORTING_DETECTION_LIMIT = reporting_detection_limit,
+    RESULT_QUALIFIER = validator_qualifiers,
+    RESULT_VALUE = result_value,
+    SUBSAMPLE_AMOUNT = subsample_amount,
+    SUBSAMPLE_AMOUNT_UNIT = subsample_amount_unit,
+    #PARAMETER_ID = i did not do this one since it looks like its uniquely created through the db
+    #RESULT_ID = same, PK
+    #SAMPLE_ID - same FK
+    RESULT_QUALIFIER = validator_qualifiers,
+    ANALYSIS_DATETIME,
+    DETECTION_LIMIT_UNIT,
+    LAB_VALIDATION_LEVEL,
+    PREP_METHOD,
+    QUALIFIER_SOURCE,
+    REPORTABLE_RESULT,
+    RESULT_CATEGORY,
+    RESULT_COMMENT,
+    RESULT_QUALIFIER_NOTE, #this one seemed to match
+    RESULT_TYPE_CODE,
+    TEST_TYPE,
+    RESULT_QUALIFIER_DESCRIPTION)
+
+
+```
+ 
+subset the quality control samples 
+
+```{r}
+
+qa <-c("*-DUP","*-FB") #listing the qa types
+
+qa_df<-result.all %>% 
+  mutate(SEIH_EVENT_SMAS_HISTORY_ID = SITE_ID,#keep a record of these
+         SITE_ID = gsub("*-DUP","",SITE_ID),
+         SITE_ID = gsub("*-FB","",SITE_ID)) %>% 
+  filter(grepl(paste(qa,collapse = "|"),SEIH_EVENT_SMAS_HISTORY_ID)) %>%   #subset to qa stuff
+  mutate(sample_date = as.POSIXct(sample_date,format = "%m/%d/%Y %H:%M")) %>% #fix the date
+  mutate(EVENT_ID = paste(SITE_ID,format(sample_date,"%Y%m%d"),
+                          "T",
+                          format(sample_date,"%H%M"),
+                          sep = ""),
+         ANALYSIS_DATETIME = as.Date(analysis_date,format("%m/%d/%Y")),
+         DETECT_FLAG = case_when(
+           lab_qualifiers %in% ">"~"greater_than",
+           lab_qualifiers %in% "<" ~ "less_than",
+           TRUE ~ ""
+         ),
+         DETECTION_LIMIT_UNIT = "cfu/100mL",
+         LAB_VALIDATION_LEVEL = "quant",
+         PREP_METHOD = "not_applicable",
+         QUALIFIER_SOURCE = "laboratory",
+         REPORTABLE_RESULT = "Yes",
+         RESULT_CATEGORY = "not_applicable",
+         RESULT_COMMENT ="",
+         RESULT_QUALIFIER_NOTE = DETECT_FLAG, #this one seemed to match
+         RESULT_TYPE_CODE = "TRG",
+         TEST_TYPE = "initial",
+         RESULT_QUALIFIER_DESCRIPTION = 
+           case_when(validator_qualifiers %in% "A"~"accepted",
+                     validator_qualifiers %in% "J" ~ "Estimated concentration - still suitable for most data uses",
+                     TRUE ~ "error"
+                     
+           ),
+         PARAMETER_NAME = case_when(
+           chemical_name %in% "e. coli" ~ "e_coli",
+           chemical_name %in% "coliform, fecal" ~"fecal_coliform",
+           TRUE ~ "error"),
+         FRACTION = "not_applicable",
+         CASRN = cas_rn,
+         SAMPLE_SOURCE = "lab",
+         SAMPLE_TYPE = "chemistry_qc",
+         MATRIX = "water",
+         METHOD_SPECIATION = "not_applicable",
+         SAMPLE_DELIVERY_GROUP = sample_delivery_group) %>% 
+  select(
+    SITE_ID,
+    EVENT_ID,
+    SAMPLE_DELIVERY_GROUP,
+    PARAMETER_NAME,
+    FRACTION,
+    CASRN,
+    MATRIX,
+    METHOD_SPECIATION,
+    DILUTION_FACTOR = dilution_factor,
+    FINAL_VOLUME = final_volume,
+    FINAL_VOLUME_UNIT = final_volume_unit,
+    LAB_ANALYTICAL_METHOD = lab_anl_method_name,
+    LAB_QUALIFIER = lab_qualifiers,
+    LAB_SAMPLE_ID = sys_sample_code,
+    METHOD_DETECTION_LIMIT = method_detection_limit,
+    PREP_DATETIME = analysis_date,
+    QUANTITATION_LIMIT = quantitation_limit,
+    REPORTING_DETECTION_LIMIT = reporting_detection_limit,
+    RESULT_QUALIFIER = validator_qualifiers,
+    RESULT_VALUE = result_value,
+    SAMPLE_NAME = SEIH_EVENT_SMAS_HISTORY_ID,
+    SAMPLE_SOURCE,
+    SAMPLE_TYPE,
+    SUBSAMPLE_AMOUNT = subsample_amount,
+    SUBSAMPLE_AMOUNT_UNIT = subsample_amount_unit,
+    #PARAMETER_ID = i did not do this one since it looks like its uniquely created through the db
+    #RESULT_ID = same, PK
+    #SAMPLE_ID - same FK
+    RESULT_QUALIFIER = validator_qualifiers,
+    ANALYSIS_DATETIME,
+    DETECTION_LIMIT_UNIT,
+    LAB_VALIDATION_LEVEL,
+    PREP_METHOD,
+    QUALIFIER_SOURCE,
+    REPORTABLE_RESULT,
+    RESULT_CATEGORY,
+    RESULT_COMMENT,
+    RESULT_QUALIFIER_NOTE, #this one seemed to match
+    RESULT_TYPE_CODE,
+    TEST_TYPE,
+    RESULT_QUALIFIER_DESCRIPTION,
+    #QUALITY_CONTROL_ID = #assigned by db
+    QC_DUP_ORIGINAL_CONCENTRATION = qc_dup_original_conc,
+    QC_DUP_SPIKE_ADDED =  qc_dup_spike_added,
+    QC_DUP_SPIKE_MEASURED = qc_dup_spike_measured,
+    QC_DUP_SPIKE_RECOVERY = qc_dup_spike_recovery,
+    QC_DUP_SPIKE_STATUS = qc_dup_spike_status,
+    QC_LEVEL = qc_level,
+    QC_ORIGINAL_CONCENTRATION = qc_original_conc,
+    QC_RPD = qc_rpd,
+    QC_RPD_CL = qc_rpd_cl,
+    QC_RPD_STATUS = qc_rpd_status,
+    QC_SPIKE_ADDED = qc_spike_added,
+    QC_SPIKE_LCL = qc_spike_lcl,
+    QC_SPIKE_MEASURED = qc_spike_measured,
+    QC_SPIKE_RECOVERY = qc_spike_recovery,
+    QC_SPIKE_STATUS = qc_spike_status,
+    QC_SPIKE_UCL = qc_spike_ucl
+  )
+    
+  skimr::skim(qa_df)  
+
+
+```
+
+Now we just need to make sure they are all good, matching and the like. RPD's were calculated using geomeans
+
+```{r check-site-ids}
+#read in charlie's 23 and 24 site correction files
+# s23<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2023_v1.xlsx")
+
+s24<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2024_v4.xlsx")
+
+
+#read in the existing sites in the wqma table
+wqma<-read.csv(here::here("outputs/sites_table_wqma.csv"))
+#take out project since that will create extra joins
+wqma<-wqma %>% 
+  select(-c("PROJECT","WIPWL")) %>% 
+  distinct()
+
+sites_bacteria <- sample.all.formatted %>% 
+  select(SITE_CODE = SITE_ID,
+         EVENT_ID) %>% 
+  distinct()
+#looks like these are all 2024
+
+wqma_join<-left_join(sites_bacteria,wqma,
+                     by = "SITE_CODE")
+#filter out the ones that are missing
+missing_bacteria_sites<-wqma_join %>% 
+  filter(is.na(LATITUDE)) %>% 
+  select(SITE_CODE) %>% 
+  distinct()
+
+#rejoin with the raw for the lat/longs of the sites
+raw_site_lat<-raw %>% 
+  select(SITE_ID,lat,long) %>% 
+  filter(SITE_ID %in% missing_bacteria_sites$SITE_CODE) %>% 
+  distinct()
+
+#write to file for the team to put together
+# write.csv(raw_site_lat,
+#           "outputs/missing_bacteria_sites.csv")
+
+```
+
+
+```{r checking that the column types are correct}
+
+build_dir <- file.path(
+  "L:",
+  "DOW",
+  "BWAM Share",
+  "data",
+  "parquet",
+  "build_tables")
+
+
+result_df <- arrow::open_dataset(sources = file.path(build_dir, "RESULT.parquet")) |> 
+  filter(LAB_SAMPLE_ID %in% "R1202229-011") %>% #trying to limit it so the collection isnt crazy
+  distinct() %>% 
+  collect()
+
+
+
+check<-janitor::compare_df_cols(result_df, 
+                         result.all.formatted, 
+                         return = "mismatch")
+
+result.all.formatted2<-result.all.formatted %>% 
+  mutate(ANALYSIS_DATETIME = as.POSIXct(as.Date(ANALYSIS_DATETIME,"%Y-%m-%d"),
+                                        tz = "America/New_York"),
+         DILUTION_FACTOR = as.numeric(DILUTION_FACTOR),
+         FINAL_VOLUME = as.numeric(FINAL_VOLUME),
+         METHOD_DETECTION_LIMIT = as.numeric(METHOD_DETECTION_LIMIT),
+         PREP_DATETIME = as.POSIXct(as.Date(PREP_DATETIME,"%m/%d/%Y"),
+                                    tz = "America/New_York"),
+         QUANTITATION_LIMIT = as.numeric(QUANTITATION_LIMIT),
+         SUBSAMPLE_AMOUNT = as.numeric(SUBSAMPLE_AMOUNT),
+         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT))
+  
+#same for qa table
+qa_df2<-qa_df %>% 
+  mutate(ANALYSIS_DATETIME = as.POSIXct(as.Date(ANALYSIS_DATETIME,"%Y-%m-%d"),
+                                        tz = "America/New_York"),
+         DILUTION_FACTOR = as.numeric(DILUTION_FACTOR),
+         FINAL_VOLUME = as.numeric(FINAL_VOLUME),
+         METHOD_DETECTION_LIMIT = as.numeric(METHOD_DETECTION_LIMIT),
+         PREP_DATETIME = as.POSIXct(as.Date(PREP_DATETIME,"%m/%d/%Y"),
+                                    tz = "America/New_York"),
+         QUANTITATION_LIMIT = as.numeric(QUANTITATION_LIMIT),
+         SUBSAMPLE_AMOUNT = as.numeric(SUBSAMPLE_AMOUNT),
+         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT))
+
+#check it again
+
+check<-janitor::compare_df_cols(result_df, 
+                         result.all.formatted2, 
+                         return = "mismatch")
+
+#NOICE these are good
+
+```
+
+```{r check the sample table}
+
+sample_df <- arrow::open_dataset(sources = file.path(build_dir, "SAMPLE.parquet")) |> 
+  filter(SAMPLE_DELIVERY_GROUP %in% "R1603723") %>% #trying to limit it so the collection isnt crazy
+  distinct() %>% 
+  collect()
+
+check<-janitor::compare_df_cols(sample_df, 
+                         sample.all.formatted, 
+                         return = "mismatch")
+
+sample.all.formatted2<-sample.all.formatted %>% 
+  mutate(REPLICATE = as.character(REPLICATE),
+         SAMPLE_LATITUDE = as.numeric(SAMPLE_LATITUDE),
+         SAMPLE_NAME = as.character(SAMPLE_NAME))
+
+check<-janitor::compare_df_cols(sample_df, 
+                         sample.all.formatted2, 
+                         return = "mismatch")
+
+#Heck ya it matches
+```
+
+
+```{r write files to RDS}
+
+#combine sample and results table for the bacteria 
+
+bacteria_final <-left_join(result.all.formatted2,
+                       sample.all.formatted2,
+                       by = c("EVENT_ID","SITE_ID"))
+
+bacteria_final<-bacteria_final %>% 
+  distinct()
+#number of rows match! 376 in both
+
+skimr::skim(bacteria_final)
+
+```
+
+```{r write these to RDS}
+
+saveRDS(
+  object = bacteria_final,
+  file = file.path(
+    "L:",
+    "DOW",
+    "BWAM Share",
+    "data",
+    "data_warehouse_staging",
+    "2024_V3",
+    "raw_data",
+    "bacteria_data_2024.rds"
+  )
+)
+
+```
+
+

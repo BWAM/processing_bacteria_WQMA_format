@@ -1,0 +1,102 @@
+---
+title: "New_db_paraqueet"
+author: "Keleigh Reynolds"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#new db
+library(arrow)
+library(dplyr)
+
+
+```
+
+Load directory
+```{r}
+# One Big Table Directory -------------------------------------------------
+base_dir <- file.path("L:",
+                     "DOW",
+                     "BWAM Share",
+                     "data",
+                     "parquet")
+
+build_dir <- file.path(base_dir, "build_tables")
+analytical_dir <- file.path(base_dir, "analytical_table_store")
+```
+
+Read in the data
+
+```{r}
+# All data
+ref_list <- read.csv(here::here("data/Basindata_reference_ltt_sites.csv"))
+
+ref_list.l<-unique(ref_list)
+
+# All insitu results
+insitu_df <- open_dataset(analytical_dir) |> 
+  filter(PARAMETER = PARAMETER_NAME %in% c("ph",
+                               "specific_conductance",
+                               "dissolved_oxygen",
+                               "dissolved_oxygen_saturation",
+                               "salinity", 
+                               "chlorophyll_a" ,
+                               "temperature"),
+         WATERBODY_TYPE %in% "river_stream") |>
+  select(SITE_CODE,
+         LATITUDE,
+         LONGITUDE,
+         WIPWL,
+         PROJECT,
+         EVENT_ID,
+         EVENT_DATETIME,
+         FRACTION,
+         PARAMETER_NAME,
+         RESULT_VALUE,
+         UNIT,
+         RESULT_QUALIFIER) |> 
+  distinct() |> 
+  collect()
+
+
+
+```
+
+```{r grab site table}
+
+sites_df <- open_dataset(analytical_dir) |> 
+  filter(WATERBODY_TYPE %in% "river_stream") |>
+  select(SITE_CODE,
+         LATITUDE,
+         LONGITUDE,
+         WIPWL,
+         PROJECT) |> 
+  distinct() |> 
+  collect()
+
+write.csv(sites_df, "outputs/sites_table_wqma.csv")
+
+pcode<-open_dataset(analytical_dir) %>% 
+  filter(WATERBODY_TYPE %in% "river_stream") |>
+  select(MATRIX,
+         METHOD_SPECIATION,
+         PARAMETER_NAME,
+         UNIT
+         ) |> 
+  distinct() |> 
+  collect()
+
+```
+Read in the site changes file
+
+```{r}
+s23<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2023_v1.xlsx")
+
+s24<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2024_v4.xlsx")
+
+
+```
+
+`
