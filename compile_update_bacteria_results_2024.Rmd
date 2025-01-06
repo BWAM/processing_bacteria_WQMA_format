@@ -615,7 +615,7 @@ check<-janitor::compare_df_cols(sample_df,
 
 bacteria_final <-left_join(result.all.formatted2,
                        sample.all.formatted2,
-                       by = c("EVENT_ID","SITE_ID"))
+                       by = c("EVENT_ID","SITE_ID")) # as of 1/6/25 advised to keep them separate
 
 bacteria_final<-bacteria_final %>% 
   distinct()
@@ -627,8 +627,23 @@ skimr::skim(bacteria_final)
 
 ```{r write these to RDS}
 
+# saveRDS(
+#   object = bacteria_final,
+#   file = file.path(
+#     "L:",
+#     "DOW",
+#     "BWAM Share",
+#     "data",
+#     "data_warehouse_staging",
+#     "2024_V3",
+#     "raw_data",
+#     "bacteria_data_2024.rds"
+#   )
+# )
+
+
 saveRDS(
-  object = bacteria_final,
+  object = sample.all.formatted2,
   file = file.path(
     "L:",
     "DOW",
@@ -637,7 +652,35 @@ saveRDS(
     "data_warehouse_staging",
     "2024_V3",
     "raw_data",
-    "bacteria_data_2024.rds"
+    "bacteria_data_2024_sample.rds"
+  )
+)
+
+saveRDS(
+  object = result.all.formatted2,
+  file = file.path(
+    "L:",
+    "DOW",
+    "BWAM Share",
+    "data",
+    "data_warehouse_staging",
+    "2024_V3",
+    "raw_data",
+    "bacteria_data_2024_results.rds"
+  )
+)
+
+saveRDS(
+  object = qa_df2,
+  file = file.path(
+    "L:",
+    "DOW",
+    "BWAM Share",
+    "data",
+    "data_warehouse_staging",
+    "2024_V3",
+    "raw_data",
+    "bacteria_data_2024_qaqc_records.rds"
   )
 )
 
