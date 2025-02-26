@@ -54,6 +54,7 @@ temp_result<-raw %>%
            "cas_rn",
            "chemical_name",
            "result_value",
+           'result_unit',
            "result_error_delta",
            "result_type_code",
            "reportable_result",
@@ -348,6 +349,7 @@ result.all.formatted <- result.all %>%
     REPORTING_DETECTION_LIMIT = reporting_detection_limit,
     RESULT_QUALIFIER = validator_qualifiers,
     RESULT_VALUE = result_value,
+    UNIT = result_unit,
     SUBSAMPLE_AMOUNT = subsample_amount,
     SUBSAMPLE_AMOUNT_UNIT = subsample_amount_unit,
     #PARAMETER_ID = i did not do this one since it looks like its uniquely created through the db
@@ -440,6 +442,7 @@ qa_df<-result.all %>%
     REPORTING_DETECTION_LIMIT = reporting_detection_limit,
     RESULT_QUALIFIER = validator_qualifiers,
     RESULT_VALUE = result_value,
+    UNIT = result_unit,
     SAMPLE_NAME = SEIH_EVENT_SMAS_HISTORY_ID,
     SAMPLE_SOURCE,
     SAMPLE_TYPE,
@@ -491,7 +494,7 @@ Now we just need to make sure they are all good, matching and the like. RPD's we
 #read in charlie's 23 and 24 site correction files
 # s23<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2023_v1.xlsx")
 
-s24<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2024_v4.xlsx")
+s24<-readxl::read_excel("L:/DOW/BWAM Share/data/data_warehouse_staging/2024_V3/raw_data/stream/siteIdCrosswalkTable2024_v4_2025_01_27.xlsx")
 
 
 #read in the existing sites in the wqma table
@@ -560,8 +563,10 @@ result.all.formatted2<-result.all.formatted %>%
                                     tz = "America/New_York"),
          QUANTITATION_LIMIT = as.numeric(QUANTITATION_LIMIT),
          SUBSAMPLE_AMOUNT = as.numeric(SUBSAMPLE_AMOUNT),
-         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT))
-  
+         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT),
+         SAMPLE_ID = EVENT_ID,
+         DETECT_FLAG = "Y")
+
 #same for qa table
 qa_df2<-qa_df %>% 
   mutate(ANALYSIS_DATETIME = as.POSIXct(as.Date(ANALYSIS_DATETIME,"%Y-%m-%d"),
@@ -573,7 +578,9 @@ qa_df2<-qa_df %>%
                                     tz = "America/New_York"),
          QUANTITATION_LIMIT = as.numeric(QUANTITATION_LIMIT),
          SUBSAMPLE_AMOUNT = as.numeric(SUBSAMPLE_AMOUNT),
-         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT))
+         REPORTING_DETECTION_LIMIT = as.numeric(REPORTING_DETECTION_LIMIT),
+         SAMPLE_ID = EVENT_ID,
+         DETECT_FLAG = "Y")
 
 #check it again
 
@@ -581,7 +588,9 @@ check<-janitor::compare_df_cols(result_df,
                          result.all.formatted2, 
                          return = "mismatch")
 
-#NOICE these are good
+setdiff(names(result_df),names(result.all.formatted2))
+
+#NOICE these are good - just missing result_id and parameter_id which the database assigns
 
 ```
 
@@ -605,7 +614,9 @@ check<-janitor::compare_df_cols(sample_df,
                          sample.all.formatted2, 
                          return = "mismatch")
 
-#Heck ya it matches
+setdiff(names(sample_df), names(sample.all.formatted2))
+
+#Heck ya it matches - just sample_id
 ```
 
 
