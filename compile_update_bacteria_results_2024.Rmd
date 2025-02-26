@@ -617,6 +617,23 @@ check<-janitor::compare_df_cols(sample_df,
 setdiff(names(sample_df), names(sample.all.formatted2))
 
 #Heck ya it matches - just sample_id
+
+#join back the sample and results
+
+merged_result<-left_join(result.all.formatted2,sample.all.formatted2,
+                         by = c("EVENT_ID","SITE_ID"))
+
+merged_result<-merged_result |> 
+  distinct()
+
+merged_result<-merged_result |> 
+  select(-c(SAMPLE_METHOD_REFERENCE,
+            SAMPLE_ID,
+            SAMPLE_LATITUDE,
+            SAMPLE_LONGITUDE,
+            SAMPLE_COMMENT))
+
+
 ```
 
 
@@ -668,7 +685,7 @@ saveRDS(
 )
 
 saveRDS(
-  object = result.all.formatted2,
+  object = merged_result,
   file = file.path(
     "L:",
     "DOW",
@@ -697,4 +714,9 @@ saveRDS(
 
 ```
 
+```{r nexus dictionary}
+
+dictionary<-nexus:::admin
+
+```
 
